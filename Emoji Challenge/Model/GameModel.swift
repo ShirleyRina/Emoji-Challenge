@@ -7,18 +7,15 @@
 
 import Foundation
 class GameModel {
-    // 当前分数
     var score: Int = 0
+    var currentEmoji: String = "happy" // 初始表情障碍
 
-    // 当前表情障碍
-    var currentEmoji: String = "😊"
-
-    // 支持的表情选项
-    private let emojiOptions = ["😊", "😢", "😱", "😮", "😡"]
+    // 表情标签列表，与模型的输出一致
+    let emojiOptions = ["anger", "contempt", "fear", "happy", "surprise"]
 
     /// 随机生成一个表情障碍
     func generateRandomEmoji() -> String {
-        return emojiOptions.randomElement() ?? "😊"
+        return emojiOptions.randomElement() ?? "happy"
     }
 
     /// 检查用户表情是否匹配当前障碍
@@ -28,10 +25,7 @@ class GameModel {
 
     /// 根据匹配结果更新分数
     func updateScore(isMatch: Bool) {
-        if isMatch {
-            score += 10 // 成功匹配加分
-        } else {
-            score -= 5 // 匹配失败扣分
-        }
+        score += isMatch ? 10 : -5
     }
 }
+

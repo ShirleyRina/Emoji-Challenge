@@ -19,9 +19,17 @@ class GameView: UIView {
     
     
         // 更新表情障碍
-        func updateEmoji(_ emoji: String) {
-            emojiLabel.text = emoji
-        }
+    func updateEmoji(_ emoji: String) {
+        // 将标签转换为 Emoji 显示
+        let emojiMap: [String: String] = [
+            "anger": "😡",
+            "contempt": "😒",
+            "fear": "😱",
+            "happy": "😊",
+            "surprise": "😮"
+        ]
+        emojiLabel.text = emojiMap[emoji] ?? "❓"
+    }
 
         // 更新分数
         func updateScore(_ score: Int) {
@@ -39,8 +47,6 @@ class GameView: UIView {
                 }
             }
         }
-        func updateEmoji(int) -> <#return type#> {
-            <#function body#>
-        }
+       
     
 }

@@ -6,47 +6,65 @@
 //
 
 import UIKit
+import SceneKit
+import ARKit
 
 class GameView: UIView {
-    // 定义摄像头预览层
-        @IBOutlet weak var cameraView: CameraView!
-    
-        // 当前表情障碍
-        @IBOutlet weak var emojiLabel: UILabel!
+
+    @IBOutlet weak var sceneView: ARSCNView!
+
    
-        // 当前分数显示
-        @IBOutlet weak var scoreLabel: UILabel!
+    @IBOutlet weak var emojiLabel: UILabel!
+    
+         
+    
+    @IBOutlet weak var scoreLabel: UILabel!
     
     
-        // 更新表情障碍
+    var currentTargetEmoji: String?
+    
+    
+// 配置 ARSCNView
+    func configureSceneView() {
+        sceneView.scene = SCNScene()
+        if ARFaceTrackingConfiguration.isSupported {
+            let configuration = ARFaceTrackingConfiguration()
+            sceneView.session.run(configuration)
+        } else {
+            print("ARFaceTrackingConfiguration is not supported.")
+        }
+    }
+    
     func updateEmoji(_ emoji: String) {
-        // 将标签转换为 Emoji 显示
-        let emojiMap: [String: String] = [
-            "anger": "😡",
-            "contempt": "😒",
-            "fear": "😱",
-            "happy": "😊",
-            "surprise": "😮"
-        ]
-        emojiLabel.text = emojiMap[emoji] ?? "❓"
+        guard currentTargetEmoji != emoji else { return }
+        currentTargetEmoji = emoji
+
+        DispatchQueue.main.async {
+            let emojiMap: [String: String] = [
+                "anger": "😡",
+                "contempt": "😒",
+                "fear": "😱",
+                "happy": "😊",
+                "surprise": "😮"
+            ]
+            self.emojiLabel.text = emojiMap[emoji] ?? "❓"
+        }
     }
 
-        // 更新分数
-        func updateScore(_ score: Int) {
-            scoreLabel.text = "Score: \(score)"
+    func updateScore(_ score: Int) {
+        DispatchQueue.main.async {
+            self.scoreLabel.text = "Score: \(score)"
         }
+    }
 
-        // 播放匹配成功或失败动画
-        func playFeedbackAnimation(isMatch: Bool) {
-            let feedbackColor = isMatch ? UIColor.green : UIColor.red
-            UIView.animate(withDuration: 0.2, animations: {
-                self.backgroundColor = feedbackColor
-            }) { _ in
-                UIView.animate(withDuration: 0.2) {
-                    self.backgroundColor = .white
-                }
-            }
-        }
-       
-    
+//    func playFeedbackAnimation(isMatch: Bool) {
+//        let feedbackColor = isMatch ? UIColor.green : UIColor.red
+//        UIView.animate(withDuration: 0.2, animations: {
+//            self.backgroundColor = feedbackColor
+//        }) { _ in
+//            UIView.animate(withDuration: 0.2) {
+//                self.backgroundColor = .white
+//            }
+//        }
+//    }
 }

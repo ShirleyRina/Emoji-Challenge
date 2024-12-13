@@ -4,10 +4,11 @@
 //
 //  Created by shirley on 12/8/24.
 //
-import CoreML
 import UIKit
+import ARKit
 import Vision
-import AVFoundation
+import CoreML
+
 
 // 定义 CoreML 模型
 var mlModel: VNCoreMLModel = {
@@ -23,146 +24,135 @@ var mlModel: VNCoreMLModel = {
 
 
 
-class GameViewController: UIViewController {
-    @IBOutlet weak var cameraView: CameraView!
-
+class GameViewController: UIViewController, ARSCNViewDelegate {
+ 
+    @IBOutlet weak var sceneView: SceneView!
+    
     @IBOutlet var gameView: GameView!
-    var model = GameModel()
     
+    var currentTargetEmoji: String = "happy"
+    var model = GameModel() // 游戏逻辑模型
+    private var sequenceHandler = VNSequenceRequestHandler() // Vision 请求处理器
+    private var lastUpdateTime: TimeInterval = 0
     
-    private var sequenceHandler = VNSequenceRequestHandler() // 用于处理 Vision 请求
-
-        override func viewDidLoad() {
-            super.viewDidLoad()
-
-            // 初始化表情障碍和分数
-            gameView.updateEmoji("happy")  // 设置初始表情
-            gameView.updateScore(0)        // 设置初始分数
-
-            // 请求相机权限并启动摄像头
-            requestCameraPermission { [weak self] granted in
-                if granted {
-                    self?.cameraView.startCamera()
-                    self?.setupVideoOutput()
-                } else {
-                    print("Camera permission denied.")
-                }
-            }
-        }
-
-
-        // 配置摄像头输出
-        private func setupVideoOutput() {
-            guard let captureSession = cameraView.captureSession else { return }
-            let videoOutput = AVCaptureVideoDataOutput()
-            videoOutput.setSampleBufferDelegate(self, queue: DispatchQueue(label: "VideoOutputQueue"))
-            captureSession.addOutput(videoOutput)
-        }
-
+    // AVCapture 会话
+    private var captureSession: AVCaptureSession!
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        // 初始化捕获会话
+        setupCaptureSession()
+        
+        // 配置游戏视图和 SceneView
+        gameView.configureSceneView()
+        sceneView.configureScene()
+        sceneView.delegate = self
+        
+        // 初始化表情和分数
+        currentTargetEmoji = "happy"
+        gameView.updateEmoji(currentTargetEmoji)
+        gameView.updateScore(0)
+        
+        // 添加第一个动态木板
+        sceneView.addDynamicWoodPlank(targetEmoji: currentTargetEmoji)
+        
+        // 定时滑动木板并更新逻辑
+        Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            let currentTime = CACurrentMediaTime()
+            let deltaTime = currentTime - self.lastUpdateTime
+            self.lastUpdateTime = currentTime
             
-    // 处理摄像头帧
-    private func handleFaceDetection(buffer: CMSampleBuffer) {
+            self.sceneView.updateScene(deltaTime: deltaTime, detectedEmoji: self.currentTargetEmoji)
+        }
+    }
+    
+    // MARK: - 设置捕获会话
+    private func setupCaptureSession() {
+        captureSession = AVCaptureSession()
+        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) else {
+            fatalError("Unable to access front camera")
+        }
+        guard let input = try? AVCaptureDeviceInput(device: device) else {
+            fatalError("Unable to create AVCaptureDeviceInput")
+        }
+        captureSession.addInput(input)
+        
+        let output = AVCaptureVideoDataOutput()
+        output.setSampleBufferDelegate(self, queue: DispatchQueue(label: "videoQueue"))
+        captureSession.addOutput(output)
+        
+        captureSession.startRunning()
+    }
+    
+    // MARK: - 处理捕获的样本缓冲区
+    func handleFaceDetection(buffer: CMSampleBuffer) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(buffer) else { return }
-
-        // 人脸检测请求
+        
+        // 创建 Vision 人脸检测请求
         let faceDetectionRequest = VNDetectFaceRectanglesRequest { [weak self] request, error in
-            guard let results = request.results as? [VNFaceObservation], let self = self else { return }
+            guard let self = self else { return }
+            guard let results = request.results as? [VNFaceObservation], let face = results.first else { return }
             
-            // 处理检测到的第一个面部
-            if let face = results.first {
-                self.processFaceObservation(face, in: pixelBuffer)
-            }
+            self.processFaceObservation(face, in: pixelBuffer)
         }
-
-        // 运行人脸检测请求
+        
+        // 执行人脸检测请求
         try? sequenceHandler.perform([faceDetectionRequest], on: pixelBuffer)
     }
-
-    private func processFaceObservation(_ face: VNFaceObservation, in pixelBuffer: CVPixelBuffer) {
-        // 将人脸区域转换为适合模型输入的图像
-        let faceCropRect = VNImageRectForNormalizedRect(
-            face.boundingBox,
-            Int(CVPixelBufferGetWidth(pixelBuffer)),
-            Int(CVPixelBufferGetHeight(pixelBuffer))
-        )
-
-        // 裁剪图像
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer).cropped(to: faceCropRect)
+    
+    // MARK: - 处理人脸观测结果
+    func processFaceObservation(_ face: VNFaceObservation, in pixelBuffer: CVPixelBuffer) {
+        // 将人脸区域裁剪为适合模型输入的图像
+        let faceRect = VNImageRectForNormalizedRect(face.boundingBox, Int(CVPixelBufferGetWidth(pixelBuffer)), Int(CVPixelBufferGetHeight(pixelBuffer)))
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer).cropped(to: faceRect)
+        
         let handler = VNImageRequestHandler(ciImage: ciImage, options: [:])
-
+        
         // 创建 CoreML 分类请求
         let classificationRequest = VNCoreMLRequest(model: mlModel) { [weak self] request, error in
-            guard let results = request.results as? [VNClassificationObservation],
-                  let bestResult = results.first else {
+            guard let self = self else { return }
+            guard let results = request.results as? [VNClassificationObservation], let bestResult = results.first else {
                 print("Failed to classify face")
                 return
             }
-
-            // 获取分类结果
+            
+            // 获取检测到的玩家表情
             let detectedEmoji = bestResult.identifier
             print("Detected Emoji: \(detectedEmoji)")
-
+            
             // 调用游戏逻辑处理分类结果
-            self?.handleDetectedEmoji(playerEmoji: detectedEmoji)
+            self.handleDetectedEmoji(playerEmoji: detectedEmoji)
         }
-
+        
         // 执行分类请求
         try? handler.perform([classificationRequest])
     }
-
-
     
-
-        // 处理检测到的表情
-    func handleDetectedEmoji(playerEmoji: String) {
-        // 检查匹配结果
-        let isMatch = model.checkMatch(playerEmoji: playerEmoji) // 调用 GameModel 检查匹配
-        model.updateScore(isMatch: isMatch)                     // 更新分数
-        gameView.playFeedbackAnimation(isMatch: isMatch)        // 播放动画
-
-        // 打印调试信息
-        print("Detected Emoji: \(playerEmoji)")
-        print("Current Emoji: \(model.currentEmoji)")
-        print("Score: \(model.score)")
-
-        // 更新 UI 在主线程
+    // MARK: - 处理检测到的玩家表情
+func handleDetectedEmoji(playerEmoji: String) {
+    let isMatch = (playerEmoji == currentTargetEmoji)
+    
+    model.updateScore(isMatch: isMatch)
+    gameView.updateScore(model.score)
+    
+    if isMatch {
+        currentTargetEmoji = model.generateRandomEmoji()
+        print("New Target Emoji: \(currentTargetEmoji)")
+        
         DispatchQueue.main.async {
-            // 生成下一个表情障碍
-            self.model.currentEmoji = self.model.generateRandomEmoji()
-            self.gameView.updateEmoji(self.model.currentEmoji)  // 更新表情障碍
-            self.gameView.updateScore(self.model.score)         // 更新分数显示
+            self.gameView.updateEmoji(self.currentTargetEmoji)
+            self.sceneView.addDynamicWoodPlank(targetEmoji: self.currentTargetEmoji)
         }
     }
-
+}
 
 }
 
 
-
-    extension GameViewController: AVCaptureVideoDataOutputSampleBufferDelegate {
-        func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-            handleFaceDetection(buffer: sampleBuffer)
-        }
+extension GameViewController: AVCaptureVideoDataOutputSampleBufferDelegate {
+    func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        handleFaceDetection(buffer: sampleBuffer)
     }
-    // 扩展添加权限请求方法
-    extension GameViewController {
-        func requestCameraPermission(completion: @escaping (Bool) -> Void) {
-            switch AVCaptureDevice.authorizationStatus(for: .video) {
-            case .authorized:
-                completion(true)
-            case .notDetermined:
-                AVCaptureDevice.requestAccess(for: .video) { granted in
-                    DispatchQueue.main.async {
-                        completion(granted)
-                    }
-                }
-            case .denied, .restricted:
-                completion(false)
-            @unknown default:
-                completion(false)
-            }
-        }
-    }
-
-
-
+}

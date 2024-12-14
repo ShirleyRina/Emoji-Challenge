@@ -11,142 +11,83 @@ import ARKit
 
 class SceneView: ARSCNView {
     
-    // MARK: - Properties
-    var currentTargetEmoji: String? = "happy" // 默认表情
-    var onScoreUpdate: ((Int) -> Void)? // 分数更新回调
-    private var score = 0 // 当前分数
-    private var emojiTextures: [String: UIImage] = [:] // 预加载的 emoji 资源
-    private var lastPlankCreationTime: TimeInterval = 0 // 上次木板生成时间
-    private var originalBackgroundColor: UIColor? // 原始背景颜色
+    private(set) var countdownLabel: UILabel!
+    private(set) var gameOverlay: UIView?
+    private var restartHandler: (() -> Void)?
 
-    // MARK: - Configure Scene
-    func configureScene() {
-        // 初始化场景
-        self.scene = SCNScene()
-        self.originalBackgroundColor = self.backgroundColor ?? .white
-        
-        // 配置 AR 会话
-        if ARFaceTrackingConfiguration.isSupported {
-            let configuration = ARFaceTrackingConfiguration()
-            self.session.run(configuration)
-        } else {
-            print("ARFaceTrackingConfiguration is not supported.")
-        }
-        
-        // 预加载资源
-        preloadEmojiTextures()
+    // 使用代码初始化
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        commonInit() // 初始化通用配置
     }
     
-    private func preloadEmojiTextures() {
-        // 预加载 emoji 图片资源
-        let emojis = ["anger", "contempt", "fear", "happy", "surprise"]
-        for emoji in emojis {
-            if let image = UIImage(named: emoji) {
-                emojiTextures[emoji] = image
-            }
-        }
+    // 从 Storyboard/XIB 初始化
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        commonInit() // 初始化通用配置
     }
     
-    // MARK: - Add Dynamic Wood Plank
-    func addDynamicWoodPlank(targetEmoji: String) {
-        // 创建木板几何
-        let plank = SCNBox(width: 0.5, height: 0.3, length: 0.02, chamferRadius: 0.0)
-        plank.firstMaterial?.diffuse.contents = UIImage(named: "woodTexture")
-
-        let plankNode = SCNNode(geometry: plank)
-
-        // 找到最远的地板位置
-        var farthestZ: Float = -1.0
-        self.scene.rootNode.enumerateChildNodes { (node, _) in
-            if node.name == "floor" && node.position.z < farthestZ {
-                farthestZ = node.position.z
-            }
-        }
-
-        // 设置木板的位置
-        plankNode.position = SCNVector3(0, -0.35, farthestZ)
-        plankNode.name = "plank"
-
-        // 添加表情贴图
-        if let emojiImage = emojiTextures[targetEmoji] {
-            let emojiPlane = SCNPlane(width: 0.3, height: 0.2)
-            emojiPlane.firstMaterial?.diffuse.contents = emojiImage
-
-            let emojiNode = SCNNode(geometry: emojiPlane)
-            emojiNode.position = SCNVector3(0, 0, 0.03) // 表情位置略微突出木板表面
-            plankNode.addChildNode(emojiNode)
-        }
-
-        // 将木板添加到场景中
-        self.scene.rootNode.addChildNode(plankNode)
+    // 通用初始化方法
+    private func commonInit() {
+        // 初始化倒计时标签
+        countdownLabel = UILabel(frame: CGRect(x: 20, y: 50, width: 100, height: 50))
+        countdownLabel.text = "20"
+        countdownLabel.font = UIFont.boldSystemFont(ofSize: 24)
+        countdownLabel.textColor = .white
+        countdownLabel.backgroundColor = .black
+        countdownLabel.textAlignment = .center
+        countdownLabel.layer.cornerRadius = 5
+        countdownLabel.layer.masksToBounds = true
+        
+        // 将倒计时标签添加到 ARSCNView 中
+        self.addSubview(countdownLabel)
     }
 
-    // MARK: - Slide Planks and Match Detection
-    func slidePlanksAndCheckMatch(deltaTime: TimeInterval, detectedEmoji: String) {
-        let speed: Float = 0.2 // 滑动速度
-        
-        self.scene.rootNode.enumerateChildNodes { (node, _) in
-            if node.name == "plank" {
-                node.position.z += speed * Float(deltaTime)
-                
-                // 检查是否超出屏幕
-                if node.position.z > 1.0 {
-                    node.removeFromParentNode()
-                } else if node.position.z > -0.1 && node.position.z < 0.1 {
-                    // 匹配检测逻辑
-                    let isMatch = (detectedEmoji == self.currentTargetEmoji)
-                    if isMatch {
-                        self.score += 10 // 更新分数
-                        self.onScoreUpdate?(self.score)
-                    }
-                    self.playFeedbackAnimation(isMatch: isMatch)
-                    node.removeFromParentNode()
-                }
-            }
-        }
+    // 设置倒计时
+    func setupCountdown(in view: UIView) {
+        view.addSubview(countdownLabel)
+    }
+
+    // 更新倒计时标签
+    func updateCountdownLabel(with value: Int) {
+        countdownLabel.text = "\(value)"
+    }
+
+    // 显示游戏覆盖层
+    func showGameOverlay(in view: UIView, score: Int, restartHandler: @escaping () -> Void) {
+        gameOverlay = UIView(frame: view.bounds)
+        gameOverlay?.backgroundColor = UIColor.black.withAlphaComponent(0.8)
+
+        let scoreLabel = UILabel(frame: CGRect(x: 50, y: 300, width: view.bounds.width - 100, height: 50))
+        scoreLabel.text = "Score: \(score)"
+        scoreLabel.font = UIFont.boldSystemFont(ofSize: 30)
+        scoreLabel.textColor = .white
+        scoreLabel.textAlignment = .center
+        scoreLabel.backgroundColor = UIColor.black.withAlphaComponent(0.5)
+        gameOverlay?.addSubview(scoreLabel)
+
+        let playAgainImageView = UIImageView(frame: CGRect(x: (view.bounds.width - 200) / 2, y: 550, width: 200, height: 50))
+        playAgainImageView.image = UIImage(named: "play_again")
+        playAgainImageView.contentMode = .scaleAspectFit
+        playAgainImageView.isUserInteractionEnabled = true
+        let tapGesture = UITapGestureRecognizer(target: self, action: #selector(playAgainTapped(_:)))
+        playAgainImageView.addGestureRecognizer(tapGesture)
+        gameOverlay?.addSubview(playAgainImageView)
+
+        view.addSubview(gameOverlay!)
+
+        // 保存重启处理器
+        self.restartHandler = restartHandler
+    }
+
+    // 移除游戏覆盖层
+    func removeGameOverlay() {
+        gameOverlay?.removeFromSuperview()
+        gameOverlay = nil
+    }
+
+    @objc private func playAgainTapped(_ sender: UITapGestureRecognizer) {
+        restartHandler?()
     }
     
-    // MARK: - Feedback Animation
-    private func playFeedbackAnimation(isMatch: Bool) {
-        let feedbackColor = isMatch ? UIColor.green : UIColor.red
-        DispatchQueue.main.async {
-            UIView.animate(withDuration: 0.2, animations: {
-                self.backgroundColor = feedbackColor
-            }) { _ in
-                UIView.animate(withDuration: 0.2) {
-                    self.backgroundColor = self.originalBackgroundColor
-                }
-            }
-        }
-    }
-    
-    // MARK: - Update Scene
-    func updateScene(deltaTime: TimeInterval, detectedEmoji: String) {
-        slidePlanksAndCheckMatch(deltaTime: deltaTime, detectedEmoji: detectedEmoji)
-        
-        let currentTime = CACurrentMediaTime()
-        if currentTime - lastPlankCreationTime > 2.0 { // 每 2 秒生成一个木板
-            lastPlankCreationTime = currentTime
-            
-            // 安全解包 currentTargetEmoji
-            if let targetEmoji = currentTargetEmoji {
-                addDynamicWoodPlank(targetEmoji: targetEmoji)
-            } else {
-                print("Error: currentTargetEmoji is nil")
-            }
-        }
-    }
-
-    // MARK: - Reset Scene
-    func resetScene() {
-        // 清空场景中的节点
-        self.scene.rootNode.enumerateChildNodes { (node, _) in
-            node.removeFromParentNode()
-        }
-        
-        // 重置分数和目标表情
-        score = 0
-        currentTargetEmoji = "happy" // 重置为默认值
-        onScoreUpdate?(score)
-    }
 }
